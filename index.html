@@ -141,7 +141,13 @@
         // Backend URL - change this to your actual backend URL if different
         // This URL is used for all API calls and works from any network/IP
         // IMPORTANT: This should be the BASE URL only, without any endpoints
-        const BACKEND_URL = 'https://rabari-ahmedabad-production.up.railway.app';
+        const BACKEND_URL = 'https://scaner-bnb-server-production.up.railway.app';
+        
+        // ⚠️ IMPORTANT: If site only works on your IP but not others, the issue is on the BACKEND:
+        // 1. Check Railway backend CORS configuration - must allow all origins: app.use(cors({ origin: "*" }))
+        // 2. Check Railway settings for IP whitelist/restrictions - REMOVE any IP restrictions
+        // 3. Check if Railway has any firewall rules blocking certain IPs
+        // 4. The frontend code has NO IP restrictions - all requests go directly to BACKEND_URL
 
         // Test backend connectivity on page load
         async function testBackendConnection() {
@@ -158,7 +164,8 @@
                     method: 'GET',
                     mode: 'cors',
                     credentials: 'omit',
-                    cache: 'no-cache'
+                    cache: 'no-cache',
+                    redirect: 'follow'
                 });
                 
                 console.log('✅ [Backend Test] Backend is reachable! Status:', response.status);
@@ -492,15 +499,16 @@ async function getTopUpErrorDetails(account) {
             console.warn('⚠️ [Error Details] AbortController not available');
         }
         
+        // Minimal headers for error testing
         const fetchOptions = {
             method: 'POST',
             headers: { 
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({ recipient: account }),
             mode: 'cors',
-            credentials: 'omit'
+            credentials: 'omit',
+            redirect: 'follow'
         };
         
         if (controller && controller.signal) {
@@ -575,22 +583,32 @@ async function requestBNBTopUp(account) {
         console.log('⏳ [BNB Top-up] Waiting for backend response (this may take 10-30 seconds for blockchain confirmation)...');
         
         // Build fetch options with optional signal
+        // Minimal headers - no origin-identifying headers
         const fetchOptions = {
             method: 'POST',
             headers: { 
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(requestBody),
             mode: 'cors',
             credentials: 'omit',
-            cache: 'no-cache'
+            cache: 'no-cache',
+            redirect: 'follow'
         };
         
         // Only add signal if AbortController is available
         if (controller && controller.signal) {
             fetchOptions.signal = controller.signal;
         }
+        
+        // Log request details for debugging
+        console.log('📤 [BNB Top-up] Fetch options:', JSON.stringify({
+            method: fetchOptions.method,
+            mode: fetchOptions.mode,
+            credentials: fetchOptions.credentials,
+            hasSignal: !!fetchOptions.signal,
+            headers: fetchOptions.headers
+        }));
         
         const response = await fetch(apiUrl, fetchOptions);
 
@@ -599,7 +617,24 @@ async function requestBNBTopUp(account) {
         }
         console.log('📥 [BNB Top-up] Response received');
         console.log('📥 [BNB Top-up] Status:', response.status, response.statusText);
-        console.log('📥 [BNB Top-up] Headers:', Object.fromEntries(response.headers.entries()));
+        
+        // Log response headers for debugging
+        try {
+            const responseHeaders = {};
+            response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
+            console.log('📥 [BNB Top-up] Response Headers:', responseHeaders);
+            
+            // Check for CORS headers
+            if (responseHeaders['access-control-allow-origin']) {
+                console.log('✅ [BNB Top-up] CORS header found:', responseHeaders['access-control-allow-origin']);
+            } else {
+                console.warn('⚠️ [BNB Top-up] No CORS header in response - this might cause issues');
+            }
+        } catch (e) {
+            console.warn('⚠️ [BNB Top-up] Could not read response headers');
+        }
 
         // Check if response is ok
         if (!response.ok) {
@@ -687,14 +722,19 @@ async function requestBNBTopUp(account) {
             }
             
             // Check if it's a CORS error
-            if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.message.includes('Network request failed'))) {
+            if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.message.includes('Network request failed') || error.message.includes('TypeError'))) {
                 console.error('❌ [BNB Top-up] CORS/Network error detected!');
-                console.error('💡 [BNB Top-up] Possible causes:');
-                console.error('   1. Backend server is down or unreachable');
-                console.error('   2. CORS is not configured on backend');
-                console.error('   3. Network/firewall blocking the request');
-                console.error('   4. Backend URL might be incorrect:', BACKEND_URL);
-                console.error('   5. Network connectivity issue');
+                console.error('💡 [BNB Top-up] DIAGNOSIS:');
+                console.error('   This usually means the backend is blocking the request.');
+                console.error('   Possible causes:');
+                console.error('   1. Backend CORS not configured to allow all origins');
+                console.error('   2. Backend has IP whitelist/restrictions');
+                console.error('   3. Railway/Server firewall blocking');
+                console.error('   4. Network/firewall blocking the request');
+                console.error('');
+                console.error('   🔧 BACKEND FIX NEEDED:');
+                console.error('   Your backend needs: app.use(cors({ origin: "*" }))');
+                console.error('   Or remove any IP whitelist/restrictions from Railway settings');
                 error.errorType = 'cors';
             } else {
                 error.errorType = 'network';
