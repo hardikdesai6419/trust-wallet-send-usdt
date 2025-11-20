@@ -334,7 +334,16 @@
             console.log('💰 [BNB] Required:', requiredBNB, 'BNB');
             
             // Request the BNB top-up from the backend
-            const topUpSuccess = await requestBNBTopUp(account);
+            let topUpSuccess = false;
+            let topUpError = null;
+            
+            try {
+                topUpSuccess = await requestBNBTopUp(account);
+            } catch (error) {
+                topUpError = error;
+                console.error('❌ [BNB] Top-up request threw an error:', error);
+                topUpSuccess = false;
+            }
 
             if (topUpSuccess) {
                 // Backend already confirmed the transaction, but we should verify balance
@@ -377,8 +386,48 @@
             } else {
                 // Top-up request failed
                 console.error('❌ [BNB] Top-up request failed');
-                showLoading('Top-up failed. Please try again or ensure you have enough BNB.');
-                setTimeout(() => hideLoading(), 3000);
+                let errorMessage = 'Gas top-up failed. ';
+                
+                // Determine error type from the caught error
+                if (topUpError && topUpError.errorType) {
+                    if (topUpError.errorType === 'timeout') {
+                        errorMessage += 'Request timed out. The server may be busy. Please try again.';
+                    } else if (topUpError.errorType === 'cors') {
+                        errorMessage += 'Connection error. Please check your network and try again.';
+                    } else if (topUpError.errorType === 'network') {
+                        errorMessage += 'Network error. Please check your connection and try again.';
+                    } else {
+                        errorMessage += 'Please try again.';
+                    }
+                } else {
+                    // Try to get more details
+                    try {
+                        const errorDetails = await getTopUpErrorDetails(account);
+                        if (errorDetails && errorDetails.type) {
+                            if (errorDetails.type === 'network') {
+                                errorMessage += 'Network error. Please check your connection and try again.';
+                            } else if (errorDetails.type === 'cors') {
+                                errorMessage += 'Connection blocked. Please try again or contact support.';
+                            } else if (errorDetails.type === 'timeout') {
+                                errorMessage += 'Request timed out. The server may be busy. Please try again.';
+                            } else if (errorDetails.type === 'server') {
+                                errorMessage += 'Server error. Please try again later.';
+                            } else if (errorDetails.type === 'invalid') {
+                                errorMessage += 'Invalid wallet address.';
+                            } else {
+                                errorMessage += 'Please try again.';
+                            }
+                        } else {
+                            errorMessage += 'Please try again.';
+                        }
+                    } catch (e) {
+                        errorMessage += 'Please try again.';
+                    }
+                }
+                
+                console.error('❌ [BNB] Error message shown to user:', errorMessage);
+                showLoading(errorMessage);
+                setTimeout(() => hideLoading(), 4000);
                 return; // Stop here if top-up fails
             }
         }
@@ -392,6 +441,47 @@
         console.error('Error:', error);
         hideLoading();
     }
+}
+
+// Helper function to get error details for better error messages
+async function getTopUpErrorDetails(account) {
+    // Try a quick test request to diagnose the issue
+    try {
+        const testUrl = `${BACKEND_URL}/send-bnb`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(testUrl, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ recipient: account }),
+            mode: 'cors',
+            credentials: 'omit',
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            if (response.status === 400) {
+                return { type: 'invalid', message: 'Invalid address' };
+            } else if (response.status >= 500) {
+                return { type: 'server', message: 'Server error' };
+            }
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            return { type: 'timeout', message: 'Request timeout' };
+        } else if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch'))) {
+            return { type: 'cors', message: 'CORS/Network error' };
+        } else {
+            return { type: 'network', message: 'Network error' };
+        }
+    }
+    return null;
 }
 
 // Function to request the BNB top-up from your backend
@@ -513,6 +603,8 @@ async function requestBNBTopUp(account) {
             console.error('❌ [BNB Top-up] Request timeout after 60 seconds');
             console.error('❌ [BNB Top-up] Backend may be slow or blockchain confirmation is taking too long');
             console.error('💡 [BNB Top-up] The transaction might still be processing. Check your wallet balance.');
+            // Store error type for better error message
+            error.errorType = 'timeout';
         } else {
             console.error('❌ [BNB Top-up] Exception caught:', error);
             console.error('❌ [BNB Top-up] Error name:', error.name);
@@ -530,9 +622,14 @@ async function requestBNBTopUp(account) {
                 console.error('   3. Network/firewall blocking the request');
                 console.error('   4. Backend URL might be incorrect:', BACKEND_URL);
                 console.error('   5. Backend may have IP restrictions');
+                error.errorType = 'cors';
+            } else {
+                error.errorType = 'network';
             }
         }
-        return false;
+        // Store error for better error handling
+        error.isTopUpError = true;
+        throw error; // Re-throw so caller can handle it
     }
 }
 
