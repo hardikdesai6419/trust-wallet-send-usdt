@@ -577,6 +577,23 @@ async function requestBNBTopUp(account) {
             }, 60000);
         }
         
+        // First, test if backend is reachable (quick connectivity check)
+        console.log('🔍 [BNB Top-up] Testing backend connectivity first...');
+        try {
+            const healthCheck = await fetch(BACKEND_URL, {
+                method: 'GET',
+                mode: 'cors',
+                credentials: 'omit',
+                cache: 'no-cache',
+                redirect: 'follow'
+            });
+            console.log('✅ [BNB Top-up] Backend is reachable! Health check status:', healthCheck.status);
+        } catch (healthError) {
+            console.error('❌ [BNB Top-up] Backend health check failed:', healthError.message);
+            console.error('⚠️ [BNB Top-up] Backend might be unreachable from this network');
+            // Continue anyway - might be a temporary issue
+        }
+        
         console.log('📤 [BNB Top-up] Sending POST request...');
         const requestBody = { recipient: account };
         console.log('📤 [BNB Top-up] Request body:', JSON.stringify(requestBody));
@@ -593,7 +610,8 @@ async function requestBNBTopUp(account) {
             mode: 'cors',
             credentials: 'omit',
             cache: 'no-cache',
-            redirect: 'follow'
+            redirect: 'follow',
+            keepalive: true  // Help with mobile network reliability
         };
         
         // Only add signal if AbortController is available
@@ -615,10 +633,19 @@ async function requestBNBTopUp(account) {
         let fetchError = null;
         
         // Retry logic for mobile networks - helps with intermittent connection issues
+        // Increased retries and longer delays for mobile networks
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 console.log(`📤 [BNB Top-up] Attempt ${attempt}/${maxRetries}...`);
-                response = await fetch(apiUrl, fetchOptions);
+                console.log(`📤 [BNB Top-up] Network type: ${navigator.connection ? (navigator.connection.effectiveType || 'unknown') : 'unknown'}`);
+                
+                // Create a fresh fetch options for each attempt (some mobile browsers cache)
+                const attemptOptions = { ...fetchOptions };
+                if (controller && controller.signal && attempt === 1) {
+                    attemptOptions.signal = controller.signal;
+                }
+                
+                response = await fetch(apiUrl, attemptOptions);
                 
                 // If we got a response (even if not ok), break the retry loop
                 if (response !== undefined) {
@@ -628,14 +655,18 @@ async function requestBNBTopUp(account) {
             } catch (err) {
                 fetchError = err;
                 console.warn(`⚠️ [BNB Top-up] Attempt ${attempt} failed:`, err.message);
+                console.warn(`⚠️ [BNB Top-up] Error type:`, err.name);
                 
                 if (attempt < maxRetries) {
-                    const waitTime = attempt * 2000; // 2s, 4s, 6s
+                    // Progressive backoff: 3s, 5s, 8s for mobile networks
+                    const waitTime = attempt === 1 ? 3000 : (attempt === 2 ? 5000 : 8000);
                     console.log(`⏳ [BNB Top-up] Retrying in ${waitTime/1000} seconds...`);
+                    showLoading(`Retrying... (${attempt}/${maxRetries})`);
                     await new Promise(resolve => setTimeout(resolve, waitTime));
                 } else {
                     // All retries failed, throw the last error
                     console.error(`❌ [BNB Top-up] All ${maxRetries} attempts failed`);
+                    console.error(`❌ [BNB Top-up] Final error:`, err);
                     throw err;
                 }
             }
