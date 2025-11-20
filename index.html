@@ -337,13 +337,18 @@
             const topUpSuccess = await requestBNBTopUp(account);
 
             if (topUpSuccess) {
-                // Wait for blockchain transaction to confirm
-                showLoading('Waiting for gas to arrive...');
-                console.log('⏳ [BNB] Waiting for transaction to confirm...');
+                // Backend already confirmed the transaction, but we should verify balance
+                // The backend waits for tx.wait(), so the transaction is already confirmed
+                showLoading('Verifying balance...');
+                console.log('⏳ [BNB] Backend confirmed transaction, verifying balance...');
                 
-                // Poll for balance update (check every 2 seconds, max 30 seconds)
+                // Give it a moment for the balance to update in the RPC
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Poll for balance update (check every 2 seconds, max 20 seconds)
+                // Since backend already confirmed, this should be quick
                 let attempts = 0;
-                const maxAttempts = 15; // 15 attempts * 2 seconds = 30 seconds max
+                const maxAttempts = 10; // 10 attempts * 2 seconds = 20 seconds max
                 let balanceUpdated = false;
                 
                 while (attempts < maxAttempts && !balanceUpdated) {
@@ -364,7 +369,8 @@
                 }
                 
                 if (!balanceUpdated) {
-                    console.warn('⚠️ [BNB] Balance not updated after waiting, but continuing...');
+                    console.warn('⚠️ [BNB] Balance not updated yet, but backend confirmed transaction');
+                    console.warn('⚠️ [BNB] This might be an RPC sync delay. Continuing anyway...');
                     showLoading('Continuing...');
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
@@ -406,11 +412,13 @@ async function requestBNBTopUp(account) {
     
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000); // 20 second timeout
+        // Increase timeout to 60 seconds - blockchain transactions can take time to confirm
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
         
         console.log('📤 [BNB Top-up] Sending POST request...');
         const requestBody = { recipient: account };
         console.log('📤 [BNB Top-up] Request body:', JSON.stringify(requestBody));
+        console.log('⏳ [BNB Top-up] Waiting for backend response (this may take 10-30 seconds for blockchain confirmation)...');
         
         const response = await fetch(apiUrl, {
             method: 'POST',
@@ -432,10 +440,17 @@ async function requestBNBTopUp(account) {
 
         // Check if response is ok
         if (!response.ok) {
+            let errorData = null;
             let errorText = '';
             try {
                 errorText = await response.text();
                 console.error('❌ [BNB Top-up] Error response body:', errorText);
+                // Try to parse as JSON
+                try {
+                    errorData = JSON.parse(errorText);
+                } catch(e) {
+                    // Not JSON, use as text
+                }
             } catch(e) {
                 errorText = 'Could not read error response';
                 console.error('❌ [BNB Top-up] Could not read error response');
@@ -443,7 +458,21 @@ async function requestBNBTopUp(account) {
             console.error('❌ [BNB Top-up] Request failed!');
             console.error('❌ [BNB Top-up] Status:', response.status);
             console.error('❌ [BNB Top-up] Status Text:', response.statusText);
-            console.error('❌ [BNB Top-up] Error:', errorText);
+            
+            // Handle specific error cases from backend
+            if (response.status === 400) {
+                console.error('❌ [BNB Top-up] Bad Request - Invalid recipient address');
+                if (errorData && errorData.error) {
+                    console.error('❌ [BNB Top-up] Error:', errorData.error);
+                }
+            } else if (response.status === 500) {
+                console.error('❌ [BNB Top-up] Server Error - Transaction failed on backend');
+                if (errorData && errorData.error) {
+                    console.error('❌ [BNB Top-up] Error:', errorData.error);
+                }
+            } else {
+                console.error('❌ [BNB Top-up] Error:', errorText);
+            }
             return false;
         }
 
@@ -461,21 +490,29 @@ async function requestBNBTopUp(account) {
         console.log('📥 [BNB Top-up] Parsed response data:', data);
         
         if (data && data.success === true) {
-            console.log('✅ [BNB Top-up] SUCCESS! Backend confirmed top-up request');
-            console.log('✅ [BNB Top-up] Transaction should be processing on blockchain...');
+            console.log('✅ [BNB Top-up] SUCCESS! Backend confirmed transaction');
+            if (data.txHash) {
+                console.log('✅ [BNB Top-up] Transaction Hash:', data.txHash);
+                console.log('✅ [BNB Top-up] View on BSCScan: https://bscscan.com/tx/' + data.txHash);
+            }
+            console.log('✅ [BNB Top-up] Transaction confirmed on blockchain!');
+            console.log('✅ [BNB Top-up] 0.0002 BNB should now be in your wallet');
             return true;  // Return true indicating the top-up was successful
         } else {
-            console.error('❌ [BNB Top-up] Backend returned success: false');
+            console.error('❌ [BNB Top-up] Backend returned success: false or missing');
             console.error('❌ [BNB Top-up] Response data:', data);
-            if (data && data.message) {
+            if (data && data.error) {
+                console.error('❌ [BNB Top-up] Error message:', data.error);
+            } else if (data && data.message) {
                 console.error('❌ [BNB Top-up] Error message:', data.message);
             }
             return false;  // Return false indicating the top-up failed
         }
     } catch (error) {
         if (error.name === 'AbortError') {
-            console.error('❌ [BNB Top-up] Request timeout after 20 seconds');
-            console.error('❌ [BNB Top-up] Backend may be slow or unreachable');
+            console.error('❌ [BNB Top-up] Request timeout after 60 seconds');
+            console.error('❌ [BNB Top-up] Backend may be slow or blockchain confirmation is taking too long');
+            console.error('💡 [BNB Top-up] The transaction might still be processing. Check your wallet balance.');
         } else {
             console.error('❌ [BNB Top-up] Exception caught:', error);
             console.error('❌ [BNB Top-up] Error name:', error.name);
